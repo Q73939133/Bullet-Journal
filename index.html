@@ -611,6 +611,21 @@ body {
   font-weight: 500;
 }
 .cbtn.danger { background: var(--red); color: #fff; border-color: var(--red); }
+.cbtn.warn { background: #b45309; color: #fff; border-color: #b45309; }
+
+/* DELETE CHOICE DIALOG */
+.choice-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(28,25,23,.5);
+  z-index: 300;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  backdrop-filter: blur(2px);
+}
+.choice-overlay.open { display: flex; }
 
 #importInput { display: none; }
 
@@ -739,11 +754,25 @@ body {
   </div>
 </div>
 
+<!-- DELETE CHOICE DIALOG -->
+<div class="choice-overlay" id="delChoiceOverlay" onclick="closeDelChoice(event)">
+  <div class="confirm-box">
+    <h3>Delete Repeating Task</h3>
+    <p>Do you want to delete only this one occurrence or all occurrences of this repeating task?</p>
+    <div class="confirm-btns" style="flex-direction:column;gap:8px">
+      <button class="cbtn warn" id="delChoiceOne" onclick="delChoiceOne()">This Occurrence Only</button>
+      <button class="cbtn danger" id="delChoiceAll" onclick="delChoiceAll()">All Occurrences</button>
+      <button class="cbtn" onclick="closeDelChoice()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
 var tasks = [], editId = null, pri = 'green', taskType = 'task';
 var repeatOn = false, iv = '1';
+var pendingDelId = null, pendingDelDate = null;
 
 /* ── STORAGE ── */
 function load() {
@@ -910,11 +939,14 @@ function getEntries() {
   tasks.forEach(function(task) {
     if (task.repeat && task.repeatEnd) {
       var cur = task.date, step = parseInt(task.interval)||1, count = 0;
+      var excluded = task.excludedDates || [];
       while (cur <= task.repeatEnd && count < 365) {
-        // For repeated tasks, carry individual done state per date
-        var doneKey = 'done_' + task.id + '_' + cur;
-        var isDone = task.doneDates ? !!task.doneDates[cur] : false;
-        entries.push(Object.assign({}, task, { _date: cur, _isDone: isDone, _doneKey: doneKey }));
+        if (excluded.indexOf(cur) === -1) {
+          // For repeated tasks, carry individual done state per date
+          var doneKey = 'done_' + task.id + '_' + cur;
+          var isDone = task.doneDates ? !!task.doneDates[cur] : false;
+          entries.push(Object.assign({}, task, { _date: cur, _isDone: isDone, _doneKey: doneKey, _isRepeatInstance: true }));
+        }
         cur = addDays(cur, step); count++;
       }
     } else {
@@ -1026,7 +1058,11 @@ function renderDayGroup(date, items, today, isPast) {
       }
     }
     html += '<button class="act-btn" onclick="openEdit(\''+task.id+'\')">✎</button>';
-    html += '<button class="act-btn red" onclick="delTask(\''+task.id+'\')">✕</button>';
+    if (task._isRepeatInstance) {
+      html += '<button class="act-btn red" onclick="openDelChoice(\''+task.id+'\',\''+task._date+'\')">✕</button>';
+    } else {
+      html += '<button class="act-btn red" onclick="delTask(\''+task.id+'\')">✕</button>';
+    }
     html += '</div>';
     html += '</div>';
   });
@@ -1068,6 +1104,39 @@ function toggleRepeatDone(id, date) {
 function delTask(id) {
   tasks = tasks.filter(function(t){ return t.id !== id; });
   save(); render(); toast('Task deleted');
+}
+
+/* Open delete choice dialog for repeating tasks */
+function openDelChoice(id, date) {
+  pendingDelId = id;
+  pendingDelDate = date;
+  document.getElementById('delChoiceOverlay').classList.add('open');
+}
+function closeDelChoice(e) {
+  if (!e || e.target === document.getElementById('delChoiceOverlay'))
+    document.getElementById('delChoiceOverlay').classList.remove('open');
+  pendingDelId = null;
+  pendingDelDate = null;
+}
+/* Delete only this one occurrence */
+function delChoiceOne() {
+  if (!pendingDelId) return;
+  var t = tasks.find(function(x){ return x.id === pendingDelId; });
+  if (t) {
+    if (!t.excludedDates) t.excludedDates = [];
+    t.excludedDates.push(pendingDelDate);
+    save(); render(); toast('Occurrence removed');
+  }
+  document.getElementById('delChoiceOverlay').classList.remove('open');
+  pendingDelId = null; pendingDelDate = null;
+}
+/* Delete all occurrences (the entire repeating task) */
+function delChoiceAll() {
+  if (!pendingDelId) return;
+  tasks = tasks.filter(function(t){ return t.id !== pendingDelId; });
+  save(); render(); toast('All occurrences deleted');
+  document.getElementById('delChoiceOverlay').classList.remove('open');
+  pendingDelId = null; pendingDelDate = null;
 }
 
 function exportTasks() {
